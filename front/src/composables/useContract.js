@@ -1,9 +1,20 @@
 import { ref } from "vue";
-import { Contract } from "ethers";
+import { BrowserProvider, Contract } from "ethers";
 import { useWallet } from "./useWallet.js";
 import ABI from "../abi/SoulboundDiploma.json";
 
 const CONTRACT_ADDRESS = import.meta.env.VITE_CONTRACT_ADDRESS || "";
+
+function normalizeDiploma(tokenId, data) {
+  return {
+    tokenId: Number(tokenId),
+    studentName: data.studentName ?? data[0],
+    degree: data.degree ?? data[1],
+    major: data.major ?? data[2],
+    graduationYear: Number(data.graduationYear ?? data[3]),
+    metadataURI: data.metadataURI ?? data[4],
+  };
+}
 
 export function useContract() {
   const { signer, provider } = useWallet();
@@ -11,10 +22,18 @@ export function useContract() {
   const txHash = ref(null);
   const error = ref(null);
 
+  function getRunner(withSigner) {
+    if (withSigner) {
+      if (!signer.value) throw new Error("Wallet not connected");
+      return signer.value;
+    }
+    if (provider.value) return provider.value;
+    if (window.ethereum) return new BrowserProvider(window.ethereum);
+    throw new Error("Wallet not connected");
+  }
+
   function getContract(withSigner = false) {
-    const runner = withSigner ? signer.value : provider.value;
-    if (!runner) throw new Error("Wallet not connected");
-    return new Contract(CONTRACT_ADDRESS, ABI, runner);
+    return new Contract(CONTRACT_ADDRESS, ABI, getRunner(withSigner));
   }
 
   async function issueDiploma(form) {
@@ -43,29 +62,23 @@ export function useContract() {
   }
 
   async function getDiploma(tokenId) {
-    const contract = getContract();
-    return contract.getDiploma(tokenId);
+    return getContract().getDiploma(tokenId);
   }
 
   async function diplomasOf(holderAddress) {
     const contract = getContract();
     const tokenIds = await contract.diplomasOf(holderAddress);
     return Promise.all(
-      tokenIds.map(async (id) => {
-        const data = await contract.getDiploma(id);
-        return { tokenId: Number(id), ...data };
-      })
+      tokenIds.map(async (id) => normalizeDiploma(id, await contract.getDiploma(id)))
     );
   }
 
   async function totalIssued() {
-    const contract = getContract();
-    return Number(await contract.totalIssued());
+    return Number(await getContract().totalIssued());
   }
 
   async function getOwner() {
-    const contract = getContract();
-    return contract.owner();
+    return getContract().owner();
   }
 
   return { loading, txHash, error, issueDiploma, getDiploma, diplomasOf, totalIssued, getOwner };
